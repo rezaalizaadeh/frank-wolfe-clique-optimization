@@ -20,13 +20,13 @@ def load_mtx_graph(filepath):
     # Returns the adjacency matrix in NumPy Array format
     A = nx.to_numpy_array(G)
     
-    # Binariza la matriz (sin pesos)
+    # Binarize the matrix (unweighted)
     A = (A > 0).astype(float)
     
-    # Doble comprobación: sin auto-bucles
+    # Double check: no self-loops
     np.fill_diagonal(A, 0.0)
     
-    # Garantiza que la matriz sea perfectamente simétrica (grafo no dirigido)
+    # Check that the matrix is symmetric
     A = np.maximum(A, A.T)
     
     return A
