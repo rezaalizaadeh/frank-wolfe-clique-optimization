@@ -1,1 +1,0 @@
-# Pairwise Frank-Wolfe algorithm
