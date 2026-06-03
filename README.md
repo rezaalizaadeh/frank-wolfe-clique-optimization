@@ -12,7 +12,7 @@ $$
 \max_{x \in \Delta} F(x) = x^T A x + \frac{1}{2}\|x\|_2^2
 $$
 
-where $begin:math:text$A$end:math:text$ is the adjacency matrix of the graph and $begin:math:text$\\Delta$end:math:text$ is the probability simplex.
+where `A` is the adjacency matrix of the graph and `Delta` is the probability simplex.
 
 For implementation, the problem is written as the equivalent minimization problem:
 
