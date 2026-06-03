@@ -24,6 +24,12 @@ from objective import (
 )
 from lmo import frank_wolfe_gap
 from line_search import exact_line_search
+from utils import (
+    is_clique,
+    clique_edge_density,
+    random_simplex_point,
+    random_vertex_point,
+)
 
 
 # ============================================================
@@ -42,41 +48,9 @@ PLOTS_DIR    = os.path.join(PROJECT_ROOT, "plots")
 # ============================================================
 # SECTION 1: CLIQUE / SIMPLEX HELPERS
 # ============================================================
-
-def is_clique(A, vertices):
-    """
-    Returns True if the given vertices form a valid clique in the graph
-    with adjacency matrix A (symmetric, 0 on diagonal).
-    """
-    vertices = np.asarray(vertices, dtype=int)
-
-    if len(vertices) <= 1:
-        return True
-
-    submatrix = A[np.ix_(vertices, vertices)]
-    k = len(vertices)
-    # In a clique of size k there are k*(k-1) directed edges (A symmetric).
-    return int(np.sum(submatrix)) == k * (k - 1)
-
-
-def clique_edge_density(A, vertices):
-    """
-    Edge density inside the selected support:
-        density = existing directed off-diagonal edges / possible ones.
-    Density = 1 means the vertices form a clique.
-    """
-    vertices = np.asarray(vertices, dtype=int)
-
-    if len(vertices) <= 1:
-        return 1.0
-
-    submatrix = A[np.ix_(vertices, vertices)]
-    k = len(vertices)
-    possible_directed_edges = k * (k - 1)
-    existing_directed_edges = np.sum(submatrix)
-
-    return float(existing_directed_edges / possible_directed_edges)
-
+# Shared clique/simplex helpers (is_clique, clique_edge_density,
+# random_simplex_point, random_vertex_point) now live in utils.py and are
+# imported above. Only the Frank-Wolfe-specific fallback below stays here.
 
 def extract_valid_clique(candidate_nodes, A):
     """
@@ -94,35 +68,6 @@ def extract_valid_clique(candidate_nodes, A):
         degrees = [sum(A[v, m] for m in nodes if m != v) for v in nodes]
         nodes.pop(int(np.argmin(degrees)))
     return np.array(nodes, dtype=int) if nodes else np.array([], dtype=int)
-
-
-def random_simplex_point(n, rng=None):
-    """
-    Random point in the simplex via normalized positive exponentials
-    (equivalent to a Dirichlet(1, ..., 1) draw).
-    """
-    if n <= 0:
-        raise ValueError("n must be positive.")
-    if rng is None:
-        rng = np.random.default_rng()
-
-    y = rng.exponential(scale=1.0, size=n)
-    return y / np.sum(y)
-
-
-def random_vertex_point(n, rng=None):
-    """
-    Random simplex vertex e_i (atom-based initialization).
-    """
-    if n <= 0:
-        raise ValueError("n must be positive.")
-    if rng is None:
-        rng = np.random.default_rng()
-
-    index = int(rng.integers(0, n))
-    x = np.zeros(n, dtype=float)
-    x[index] = 1.0
-    return x
 
 
 # ============================================================
@@ -214,6 +159,9 @@ def frank_wolfe_max_clique(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10
         "final_minimization_objective": minimization_objective(A, x),
         "final_gap": gap_history[-1],
         "final_support_size": len(clique_nodes),
+        # Raw thresholded support at convergence (classic FW leaves dust, so this
+        # can exceed the extracted valid clique size above).
+        "final_raw_support_size": support_size_history[-1],
         "final_is_clique": is_clique(A, clique_nodes),
         "final_clique_density": clique_edge_density(A, clique_nodes),
     }
@@ -303,6 +251,7 @@ def multistart_frank_wolfe(
     )
 
     clique_sizes = np.array([r["final_support_size"] for r in all_results], dtype=float)
+    raw_support_sizes = np.array([r["final_raw_support_size"] for r in all_results], dtype=float)
     objectives = np.array([r["final_objective"] for r in all_results], dtype=float)
     runtimes = np.array([r["runtime"] for r in all_results], dtype=float)
     clique_flags = np.array([r["final_is_clique"] for r in all_results], dtype=bool)
@@ -316,8 +265,15 @@ def multistart_frank_wolfe(
         "best_clique_size": best_result["final_support_size"],
         "best_objective": best_result["final_objective"],
         "best_vertices": best_result["selected_vertices"],
+        "best_result_is_valid_clique": best_result["final_is_clique"],
         "mean_clique_size": float(np.mean(clique_sizes)),
         "std_clique_size": float(np.std(clique_sizes)),
+        # Aliases used by main.py: classic FW reports the extracted valid clique
+        # ("valid_clique") separately from the raw thresholded support ("support").
+        "mean_valid_clique_size": float(np.mean(clique_sizes)),
+        "std_valid_clique_size": float(np.std(clique_sizes)),
+        "mean_support_size_all_runs": float(np.mean(raw_support_sizes)),
+        "std_support_size_all_runs": float(np.std(raw_support_sizes)),
         "mean_objective": float(np.mean(objectives)),
         "std_objective": float(np.std(objectives)),
         "mean_runtime": float(np.mean(runtimes)),
