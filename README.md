@@ -117,7 +117,7 @@ The experiments use:
 - 20 starting points
 - Mixed initialization strategy
 - Maximum iterations: 1000
-- Frank-Wolfe gap tolerance: $begin:math:text$10\^\{\-6\}$end:math:text$
+- Frank-Wolfe gap tolerance: `1e-6`
 - Exact line search
 
 The mixed initialization includes uniform, random vertex, and random simplex starting points.
