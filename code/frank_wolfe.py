@@ -9,7 +9,6 @@ Frank-Wolfe is written for minimization, so internally we minimize
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import os
 import time
 
@@ -27,6 +26,7 @@ from line_search import exact_line_search
 from utils import (
     is_clique,
     clique_edge_density,
+    extract_valid_clique,
     random_simplex_point,
     random_vertex_point,
 )
@@ -38,36 +38,17 @@ from utils import (
 # Resolved relative to this file, so the script works no matter the current
 # working directory. Layout:  Project/code/frank_wolfe.py
 #                             Project/data/*.mtx
-#                             Project/plots/*.png
 HERE         = os.path.dirname(os.path.abspath(__file__))   # .../Project/code
 PROJECT_ROOT = os.path.dirname(HERE)                        # .../Project
 DATA_DIR     = os.path.join(PROJECT_ROOT, "data")
-PLOTS_DIR    = os.path.join(PROJECT_ROOT, "plots")
 
 
 # ============================================================
 # SECTION 1: CLIQUE / SIMPLEX HELPERS
 # ============================================================
-# Shared clique/simplex helpers (is_clique, clique_edge_density,
-# random_simplex_point, random_vertex_point) now live in utils.py and are
-# imported above. Only the Frank-Wolfe-specific fallback below stays here.
-
-def extract_valid_clique(candidate_nodes, A):
-    """
-    Fallback (Frank-Wolfe specific). From a set of candidate nodes, extracts the
-    largest valid clique by iteratively removing the least-connected node.
-
-    Classic FW does not zero out coordinates, so its thresholded support may not
-    be a clean clique; this guarantees the returned node set is a true clique.
-    """
-    nodes = list(candidate_nodes)
-    while len(nodes) > 1:
-        if is_clique(A, np.array(nodes)):
-            return np.array(nodes)
-        # Remove the node with fewest edges inside the candidate set.
-        degrees = [sum(A[v, m] for m in nodes if m != v) for v in nodes]
-        nodes.pop(int(np.argmin(degrees)))
-    return np.array(nodes, dtype=int) if nodes else np.array([], dtype=int)
+# All shared clique/simplex helpers (is_clique, clique_edge_density,
+# extract_valid_clique, random_simplex_point, random_vertex_point) now live in
+# utils.py and are imported above, so the three algorithms share them.
 
 
 # ============================================================
@@ -286,7 +267,7 @@ def multistart_frank_wolfe(
 
 
 # ============================================================
-# SECTION 4: RESULTS - TEXT SUMMARY, TABLE AND PLOTS
+# SECTION 4: RESULTS - TEXT SUMMARY AND TABLE
 # ============================================================
 
 # Best known clique sizes for the selected DIMACS instances (from Table 1 of the paper).
@@ -361,90 +342,6 @@ def print_results_table(all_summaries, datasets):
     print(sep + "\n")
 
 
-def plot_results(all_summaries, datasets, save_path="frank_wolfe_results.png"):
-    """
-    Three plots:
-      1. Convergence curve F(x) (best run per dataset)
-      2. Box plot of clique sizes across all starts
-      3. Bar chart: mean and best quality vs best known (%)
-    """
-    existing = [ds for ds in datasets if ds in all_summaries]
-    if not existing:
-        print("[WARNING] No results to plot.")
-        return
-    colors = ['steelblue', 'darkorange', 'forestgreen']
-
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    fig.suptitle(
-        'Frank-Wolfe - L2 Regularized Max-Clique (DIMACS Instances)',
-        fontsize=13, fontweight='bold'
-    )
-
-    # Plot 1: Convergence (F(x) of the best run per dataset)
-    ax = axes[0]
-    for ds, color in zip(existing, colors):
-        hist  = all_summaries[ds]['best_result']['objective_history']
-        best  = all_summaries[ds]['best_clique_size']
-        short = ds.replace('.mtx', '')
-        ax.plot(hist, label=f"{short}  (best clique={best})", color=color, linewidth=1.8)
-
-    ax.set_title('Convergence (best run per dataset)')
-    ax.set_xlabel('Iteration')
-    ax.set_ylabel('Objective value  F(x) = x^T A x + 0.5||x||^2')
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
-
-    # Plot 2: Box plot of clique sizes
-    ax     = axes[1]
-    data   = [np.array([r["final_support_size"] for r in all_summaries[ds]['all_results']])
-              for ds in existing]
-    labels = [ds.replace('.mtx', '') for ds in existing]
-
-    bp = ax.boxplot(data, tick_labels=labels, patch_artist=True, widths=0.5)
-    for patch, color in zip(bp['boxes'], colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.55)
-
-    for i, (ds, color) in enumerate(zip(existing, colors), start=1):
-        bk = BEST_KNOWN.get(ds)
-        if bk:
-            ax.axhline(y=bk, color=color, linestyle='--', linewidth=1.2, alpha=0.7)
-            ax.plot(i, bk, '*', color=color, markersize=14,
-                    label=f"{ds.replace('.mtx','')} best known={bk}")
-
-    ax.set_title('Clique Size Distribution\n(* = Best known  |  --- = Best known)')
-    ax.set_ylabel('Clique size')
-    ax.legend(fontsize=7)
-    ax.grid(True, axis='y', alpha=0.3)
-
-    # Plot 3: Quality bar chart
-    ax       = axes[2]
-    ds_short = [ds.replace('.mtx', '') for ds in existing]
-    q_mean   = [np.mean([r["final_support_size"] for r in all_summaries[ds]['all_results']]) /
-                BEST_KNOWN.get(ds, 1) * 100 for ds in existing]
-    q_max    = [np.max([r["final_support_size"] for r in all_summaries[ds]['all_results']]) /
-                BEST_KNOWN.get(ds, 1) * 100 for ds in existing]
-    x_pos    = np.arange(len(ds_short))
-
-    ax.bar(x_pos - 0.2, q_mean, 0.38, label='Mean quality',
-           color=colors[:len(existing)], alpha=0.55)
-    ax.bar(x_pos + 0.2, q_max,  0.38, label='Best quality',
-           color=colors[:len(existing)], alpha=1.0)
-    ax.axhline(y=100, color='red', linestyle='--', linewidth=1.5, label='Best known (100 %)')
-
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(ds_short)
-    ax.set_title('Solution Quality vs Best Known')
-    ax.set_ylabel('Quality (%)')
-    ax.legend(fontsize=8)
-    ax.grid(True, axis='y', alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    print(f"[INFO] Plot saved to '{save_path}'")
-    plt.show()
-
-
 # ============================================================
 # SECTION 5: MAIN
 # ============================================================
@@ -454,7 +351,7 @@ def run_experiments(num_starts=100, max_iter=1000, tol=1e-6, seed=42,
     """
     Run the full multistart Frank-Wolfe experiment on the 3 DIMACS datasets.
     Prints a per-dataset text summary (same format as pairwise_fw.py), then the
-    results table, and generates all plots.
+    results table. Plot/CSV generation lives in a separate script.
     """
     datasets      = list(BEST_KNOWN.keys())
     all_summaries = {}
@@ -482,10 +379,6 @@ def run_experiments(num_starts=100, max_iter=1000, tol=1e-6, seed=42,
 
     print()
     print_results_table(all_summaries, datasets)
-
-    os.makedirs(PLOTS_DIR, exist_ok=True)
-    plot_save_path = os.path.join(PLOTS_DIR, "frank_wolfe_results.png")
-    plot_results(all_summaries, datasets, save_path=plot_save_path)
 
     return all_summaries
 
