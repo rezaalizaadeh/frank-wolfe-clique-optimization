@@ -26,6 +26,7 @@ Therefore:
     gamma_max = x[away_index]
 """
 
+import os
 import time
 import numpy as np
 
@@ -41,12 +42,97 @@ from objective import (
 )
 from lmo import active_set_lmo, frank_wolfe_gap
 from line_search import exact_line_search
-from utils import (
-    is_clique,
-    clique_edge_density,
-    random_simplex_point,
-    random_vertex_point,
-)
+from utils import extract_valid_clique
+
+
+# ============================================================
+# PROJECT PATHS
+# ============================================================
+# Resolved relative to this file, so the script works no matter the current
+# working directory. Layout:  Project/code/pairwise_fw.py
+#                             Project/data/*.mtx
+HERE         = os.path.dirname(os.path.abspath(__file__))   # .../Project/code
+PROJECT_ROOT = os.path.dirname(HERE)                        # .../Project
+DATA_DIR     = os.path.join(PROJECT_ROOT, "data")
+
+
+def is_clique(A, vertices):
+    """
+    Check whether the selected vertices form a clique.
+
+    A set of vertices is a clique if every pair of different vertices
+    is connected by an edge.
+    """
+    vertices = np.asarray(vertices, dtype=int)
+
+    if len(vertices) <= 1:
+        return True
+
+    submatrix = A[np.ix_(vertices, vertices)]
+    k = len(vertices)
+
+    required_directed_edges = k * (k - 1)
+    actual_directed_edges = int(np.sum(submatrix))
+
+    return actual_directed_edges == required_directed_edges
+
+
+def clique_edge_density(A, vertices):
+    """
+    Compute edge density inside the selected support.
+
+    Density = existing directed off-diagonal edges / possible directed off-diagonal edges.
+
+    If density = 1, the selected vertices form a clique.
+    """
+    vertices = np.asarray(vertices, dtype=int)
+
+    if len(vertices) <= 1:
+        return 1.0
+
+    submatrix = A[np.ix_(vertices, vertices)]
+
+    k = len(vertices)
+    possible_directed_edges = k * (k - 1)
+    existing_directed_edges = np.sum(submatrix)
+
+    return float(existing_directed_edges / possible_directed_edges)
+
+
+def random_simplex_point(n, rng=None):
+    """
+    Generate a random point in the simplex.
+
+    Positive exponential random variables normalized by their sum give
+    a random probability vector.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive.")
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    y = rng.exponential(scale=1.0, size=n)
+    return y / np.sum(y)
+
+
+def random_vertex_point(n, rng=None):
+    """
+    Generate a random simplex vertex e_i.
+
+    This matches the atom-based initialization used in many FW descriptions.
+    """
+    if n <= 0:
+        raise ValueError("n must be positive.")
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    index = int(rng.integers(0, n))
+    x = np.zeros(n, dtype=float)
+    x[index] = 1.0
+
+    return x
 
 
 def pairwise_frank_wolfe(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10):
@@ -186,10 +272,17 @@ def pairwise_frank_wolfe(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10):
 
     runtime = time.time() - start_time
 
-    selected_vertices = support_indices(x, tol=active_tol)
+    # Unified clique extraction (same as frank_wolfe.py) so the three algorithms
+    # report clique size the same way and the comparison is fair.
+    raw_support_size = support_size(x, tol=active_tol)   # diagnostic: sparsity of the iterate
+    threshold = 1.0 / (2 * n)
+    clique_nodes = support_indices(x, tol=threshold)
+    if not is_clique(A, clique_nodes):
+        clique_nodes = extract_valid_clique(clique_nodes, A)
 
-    final_is_clique = is_clique(A, selected_vertices)
-    final_clique_density = clique_edge_density(A, selected_vertices)
+    selected_vertices = clique_nodes
+    final_is_clique = is_clique(A, clique_nodes)
+    final_clique_density = clique_edge_density(A, clique_nodes)
 
     result = {
         "x_final": x,
@@ -207,7 +300,9 @@ def pairwise_frank_wolfe(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10):
         "final_objective": max_clique_objective(A, x),
         "final_minimization_objective": minimization_objective(A, x),
         "final_gap": gap_history[-1],
-        "final_support_size": support_size(x, tol=active_tol),
+        "final_support_size": len(clique_nodes),
+        # Raw thresholded support at convergence (kept as a sparsity diagnostic).
+        "final_raw_support_size": raw_support_size,
         "final_is_clique": final_is_clique,
         "final_clique_density": final_clique_density,
         "good_step_count": good_step_count,
@@ -317,23 +412,14 @@ def multistart_pairwise_frank_wolfe(
 
         all_results.append(result)
 
-    # Pairwise FW is expected to return clique supports, but keep this robust.
-    valid_clique_results = [r for r in all_results if r["final_is_clique"]]
+    # Best result: prioritize clique size, then objective.
+    best_result = max(
+        all_results,
+        key=lambda r: (r["final_support_size"], r["final_objective"]),
+    )
 
-    if len(valid_clique_results) > 0:
-        best_result = max(
-            valid_clique_results,
-            key=lambda r: (r["final_support_size"], r["final_objective"]),
-        )
-        best_result_is_valid_clique = True
-    else:
-        best_result = max(
-            all_results,
-            key=lambda r: r["final_objective"],
-        )
-        best_result_is_valid_clique = False
-
-    support_sizes = np.array([r["final_support_size"] for r in all_results], dtype=float)
+    clique_sizes = np.array([r["final_support_size"] for r in all_results], dtype=float)
+    raw_support_sizes = np.array([r["final_raw_support_size"] for r in all_results], dtype=float)
     objectives = np.array([r["final_objective"] for r in all_results], dtype=float)
     runtimes = np.array([r["runtime"] for r in all_results], dtype=float)
     clique_flags = np.array([r["final_is_clique"] for r in all_results], dtype=bool)
@@ -343,16 +429,17 @@ def multistart_pairwise_frank_wolfe(
 
     summary = {
         "all_results": all_results,
-        "valid_clique_results": valid_clique_results,
         "best_result": best_result,
-        "best_result_is_valid_clique": best_result_is_valid_clique,
         "num_starts": num_starts,
         "start_mode": start_mode,
+        "n_nodes": n,
         "best_clique_size": best_result["final_support_size"],
         "best_objective": best_result["final_objective"],
         "best_vertices": best_result["selected_vertices"],
-        "mean_clique_size": float(np.mean(support_sizes)),
-        "std_clique_size": float(np.std(support_sizes)),
+        "mean_clique_size": float(np.mean(clique_sizes)),
+        "std_clique_size": float(np.std(clique_sizes)),
+        "mean_support_size_all_runs": float(np.mean(raw_support_sizes)),
+        "std_support_size_all_runs": float(np.std(raw_support_sizes)),
         "mean_objective": float(np.mean(objectives)),
         "std_objective": float(np.std(objectives)),
         "mean_runtime": float(np.mean(runtimes)),
@@ -367,30 +454,30 @@ def multistart_pairwise_frank_wolfe(
     return summary
 
 
-if __name__ == "__main__":
-    # Local multistart test.
-    # Run from project root:
-    # python3 Code/pairwise_fw.py
+# ============================================================
+# RESULTS - TEXT SUMMARY AND TABLE
+# ============================================================
 
-    dataset_name = "C125-9.mtx"
-    A = load_mtx_graph(f"Data/{dataset_name}")
+# Best known clique sizes for the selected DIMACS instances (from Table 1 of the paper).
+# Keys MUST match the actual .mtx filenames in the data/ directory.
+BEST_KNOWN = {
+    'C125-9.mtx':     34,
+    'brock200-2.mtx': 12,
+    'keller4.mtx':    11,
+}
 
-    summary = multistart_pairwise_frank_wolfe(
-        A,
-        num_starts=20,
-        max_iter=1000,
-        tol=1e-6,
-        seed=42,
-        start_mode="mixed",
-    )
 
+def print_summary(dataset_name, summary):
+    """
+    Print the multistart summary. Common block matches frank_wolfe.py; the
+    pairwise-specific step statistics (good/drop/swap) are appended at the end.
+    """
     best = summary["best_result"]
 
     print(f"Multistart Pairwise Frank-Wolfe test on {dataset_name}")
     print("------------------------------------------------")
     print("Number of starts:", summary["num_starts"])
     print("Start mode:", summary["start_mode"])
-    print("Best result is valid clique:", summary["best_result_is_valid_clique"])
     print("Best clique size:", summary["best_clique_size"])
     print("Best objective:", summary["best_objective"])
     print("Best vertices:", summary["best_vertices"])
@@ -416,3 +503,79 @@ if __name__ == "__main__":
     print("Good steps:", best["good_step_count"])
     print("Drop steps:", best["drop_step_count"])
     print("Swap steps:", best["swap_step_count"])
+
+
+def print_results_table(all_summaries, datasets):
+    """
+    Compact results table across datasets: Max, Mean, Std, Quality %, Avg Time.
+    Mirrors the structure of Table 2 in the paper.
+    """
+    col = (f"\n{'Dataset':<17} | {'Nodes':<6} | {'Best Known':<11} | "
+           f"{'Max':<5} | {'Mean':>7} | {'Std':>5} | "
+           f"{'Quality %':>10} | {'Avg Time (s)':>12}")
+    sep = '-' * len(col)
+
+    print(sep)
+    print(col)
+    print(sep)
+
+    for ds in datasets:
+        if ds not in all_summaries:
+            continue
+        summ  = all_summaries[ds]
+        n     = summ["n_nodes"]
+        bk    = BEST_KNOWN.get(ds, None)
+        sizes = np.array([r["final_support_size"] for r in summ["all_results"]])
+        times = np.array([r["runtime"] for r in summ["all_results"]])
+        q     = f"{sizes.max() / bk * 100:.1f}%" if bk else "N/A"
+
+        print(f"{ds:<17} | {n:<6} | {str(bk):<11} | "
+              f"{sizes.max():<5} | {sizes.mean():>7.2f} | {sizes.std():>5.2f} | "
+              f"{q:>10} | {times.mean():>12.4f}")
+
+    print(sep + "\n")
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def run_experiments(num_starts=100, max_iter=1000, tol=1e-6, seed=42,
+                    start_mode="uniform_random"):
+    """
+    Run the full multistart Pairwise Frank-Wolfe experiment on the 3 DIMACS
+    datasets. Prints a per-dataset text summary, then the results table.
+    Plot/CSV generation lives in a separate script.
+    """
+    datasets      = list(BEST_KNOWN.keys())
+    all_summaries = {}
+
+    for ds in datasets:
+        dataset_path = os.path.join(DATA_DIR, ds)
+        if not os.path.exists(dataset_path):
+            print(f"[WARNING] File not found: '{dataset_path}'. "
+                  f"Place the .mtx file in the data/ directory and re-run.")
+            continue
+
+        A = load_mtx_graph(dataset_path)
+
+        print(f"\n[INFO] Dataset: {ds}  |  Nodes: {A.shape[0]}  |  "
+              f"Running {num_starts} starts...", flush=True)
+
+        summary = multistart_pairwise_frank_wolfe(
+            A, num_starts=num_starts, max_iter=max_iter, tol=tol,
+            seed=seed, start_mode=start_mode,
+        )
+        all_summaries[ds] = summary
+
+        print()
+        print_summary(ds, summary)
+
+    print()
+    print_results_table(all_summaries, datasets)
+
+    return all_summaries
+
+
+if __name__ == "__main__":
+    results = run_experiments(num_starts=100)
