@@ -50,6 +50,26 @@ def clique_edge_density(A, vertices):
     return float(existing_directed_edges / possible_directed_edges)
 
 
+def extract_valid_clique(candidate_nodes, A):
+    """
+    From a set of candidate nodes, extract the largest valid clique by iteratively
+    removing the least-connected node.
+
+    Shared clique-extraction routine used by all three Frank-Wolfe variants so that
+    they report clique size the same way. Classic FW does not zero out coordinates,
+    so its thresholded support may not be a clean clique; this guarantees the
+    returned node set is a true clique (it only removes nodes, never adds them).
+    """
+    nodes = list(candidate_nodes)
+    while len(nodes) > 1:
+        if is_clique(A, np.array(nodes)):
+            return np.array(nodes)
+        # Remove the node with fewest edges inside the candidate set.
+        degrees = [sum(A[v, m] for m in nodes if m != v) for v in nodes]
+        nodes.pop(int(np.argmin(degrees)))
+    return np.array(nodes, dtype=int) if nodes else np.array([], dtype=int)
+
+
 def random_simplex_point(n, rng=None):
     """
     Generate a random point in the simplex.
