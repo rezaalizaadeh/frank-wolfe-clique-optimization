@@ -42,7 +42,13 @@ from objective import (
 )
 from lmo import active_set_lmo, frank_wolfe_gap
 from line_search import exact_line_search
-from utils import extract_valid_clique
+from utils import (
+    is_clique,
+    clique_edge_density,
+    extract_valid_clique,
+    random_simplex_point,
+    random_vertex_point,
+)
 
 
 # ============================================================
@@ -56,84 +62,8 @@ PROJECT_ROOT = os.path.dirname(HERE)                        # .../Project
 DATA_DIR     = os.path.join(PROJECT_ROOT, "data")
 
 
-def is_clique(A, vertices):
-    """
-    Check whether the selected vertices form a clique.
 
-    A set of vertices is a clique if every pair of different vertices
-    is connected by an edge.
-    """
-    vertices = np.asarray(vertices, dtype=int)
-
-    if len(vertices) <= 1:
-        return True
-
-    submatrix = A[np.ix_(vertices, vertices)]
-    k = len(vertices)
-
-    required_directed_edges = k * (k - 1)
-    actual_directed_edges = int(np.sum(submatrix))
-
-    return actual_directed_edges == required_directed_edges
-
-
-def clique_edge_density(A, vertices):
-    """
-    Compute edge density inside the selected support.
-
-    Density = existing directed off-diagonal edges / possible directed off-diagonal edges.
-
-    If density = 1, the selected vertices form a clique.
-    """
-    vertices = np.asarray(vertices, dtype=int)
-
-    if len(vertices) <= 1:
-        return 1.0
-
-    submatrix = A[np.ix_(vertices, vertices)]
-
-    k = len(vertices)
-    possible_directed_edges = k * (k - 1)
-    existing_directed_edges = np.sum(submatrix)
-
-    return float(existing_directed_edges / possible_directed_edges)
-
-
-def random_simplex_point(n, rng=None):
-    """
-    Generate a random point in the simplex.
-
-    Positive exponential random variables normalized by their sum give
-    a random probability vector.
-    """
-    if n <= 0:
-        raise ValueError("n must be positive.")
-
-    if rng is None:
-        rng = np.random.default_rng()
-
-    y = rng.exponential(scale=1.0, size=n)
-    return y / np.sum(y)
-
-
-def random_vertex_point(n, rng=None):
-    """
-    Generate a random simplex vertex e_i.
-
-    This matches the atom-based initialization used in many FW descriptions.
-    """
-    if n <= 0:
-        raise ValueError("n must be positive.")
-
-    if rng is None:
-        rng = np.random.default_rng()
-
-    index = int(rng.integers(0, n))
-    x = np.zeros(n, dtype=float)
-    x[index] = 1.0
-
-    return x
-
+# Shared clique/simplex helpers are imported from utils.py.
 
 def pairwise_frank_wolfe(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10):
     """
@@ -430,6 +360,7 @@ def multistart_pairwise_frank_wolfe(
     summary = {
         "all_results": all_results,
         "best_result": best_result,
+        "best_result_is_valid_clique": best_result["final_is_clique"],
         "num_starts": num_starts,
         "start_mode": start_mode,
         "n_nodes": n,
