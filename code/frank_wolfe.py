@@ -115,6 +115,18 @@ def frank_wolfe_max_clique(A, x0=None, max_iter=1000, tol=1e-6, active_tol=1e-10
 
         x = x + gamma * d
 
+        # Numerical cleanup to avoid tiny floating-point drift.
+        x[np.abs(x) < active_tol] = 0.0
+
+        total_mass = np.sum(x)
+        if total_mass <= 0:
+            raise RuntimeError("Numerical error: simplex mass became nonpositive.")
+
+        x = x / total_mass
+
+        if not is_in_simplex(x, tol=1e-7):
+            raise RuntimeError("Numerical error: iterate left the simplex.")
+
     runtime = time.time() - start_time
 
     # Clique extraction (FW-specific). Theory says clique = supp(x*), but classic
