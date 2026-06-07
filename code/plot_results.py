@@ -40,6 +40,26 @@ def save_bar_plot_best_clique(df):
     print(f"Saved: {output_path}")
 
 
+def save_bar_plot_mean_clique(df):
+    pivot = df.pivot(index="dataset", columns="algorithm", values="mean_clique_size")
+
+    ax = pivot.plot(kind="bar", figsize=(9, 5))
+    ax.set_title("Mean Clique Size Across All Starts")
+    ax.set_xlabel("Dataset")
+    ax.set_ylabel("Mean clique size")
+    ax.legend(title="Algorithm")
+    ax.grid(axis="y", linestyle="--", alpha=0.5)
+
+    plt.xticks(rotation=0)
+    plt.tight_layout()
+
+    output_path = os.path.join(PLOTS_DIR, "mean_clique_sizes.png")
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+
+    print(f"Saved: {output_path}")
+
+
 def save_bar_plot_ratio_to_best_known(df):
     pivot = df.pivot(index="dataset", columns="algorithm", values="ratio_to_best_known")
 
@@ -148,6 +168,7 @@ def main():
     df = pd.read_csv(RESULTS_CSV)
 
     save_bar_plot_best_clique(df)
+    save_bar_plot_mean_clique(df)
     save_bar_plot_ratio_to_best_known(df)
     save_bar_plot_success_rate(df)
     save_bar_plot_runtime(df)
