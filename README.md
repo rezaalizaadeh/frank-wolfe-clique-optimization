@@ -79,7 +79,7 @@ plots/
 ├── clique_success_rate.png
 └── results_table.png
 report/
-└── final report file
+└── final_report.pdf
 
 Files Description
 
