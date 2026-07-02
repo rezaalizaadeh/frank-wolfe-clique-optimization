@@ -221,7 +221,5 @@ The same post-processing procedure is applied consistently to all three Frank-Wo
 
 ## Authors
 
-Course project by **Group 11**.
-
 - Reza Alizadeh
 - Miguel Cruz Real
